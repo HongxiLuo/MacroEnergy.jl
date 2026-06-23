@@ -4,7 +4,6 @@ using CSV, JSON3, GZip, Parquet2
 using Dates
 using DuckDB
 using DataFrames
-using JSONTables
 using OrderedCollections
 using JuMP
 using HiGHS
@@ -21,6 +20,7 @@ using GitHub
 using Markdown
 using Logging
 using LoggingExtras
+using Infiltrator
 
 import MacroEnergyScaling: scale_constraints!
 import JuMP: set_optimizer, set_optimizer_attributes
@@ -49,6 +49,7 @@ abstract type Bauxite <: Commodity end ## tonnes
 abstract type IronOre <: Commodity end ## tonnes
 abstract type SteelScrap <: Commodity end ## tonnes
 abstract type CrudeSteel <: Commodity end ## tonnes
+abstract type DRI <: Commodity end ## tonnes
 abstract type Ammonia <: Commodity end ## MWh
 abstract type Methanol <: Commodity end ## MWh
 abstract type Nitrogen <: Commodity end ## tonnes
@@ -225,6 +226,8 @@ include("model/assets/thermalheating.jl")
 include("model/assets/electricheating.jl")
 include("model/assets/thermalsteam.jl")
 include("model/assets/electricsteam.jl")
+include("model/assets/steelmaking.jl")
+include("model/assets/drimaking.jl")
 
 include("config/configure_settings.jl")
 include("config/case_settings.jl")
@@ -267,6 +270,8 @@ export AbstractAsset,
     create_optimizer,
     DirectReductionElectricArcFurnace,
     DirectReductionElectricArcFurnaceCCS,
+    DRI,
+    DRIMaking,
     Edge,
     UnidirectionalEdge,
     BidirectionalEdge,
@@ -341,6 +346,7 @@ export AbstractAsset,
     StorageSymmetricCapacityConstraint,
     StorageDischargeLimitConstraint,
     StorageChargeLimitConstraint,
+    Steelmaking,
     SyntheticNaturalGas,
     SyntheticLiquidFuels,
     ThermalHydrogen,
@@ -379,7 +385,6 @@ export AbstractAsset,
     example_contents,
     authenticate_github,
     mermaid_diagram,
-    save_mermaid_diagram,
-    write_to_json
+    save_mermaid_diagram
     
 end # module MacroEnergy

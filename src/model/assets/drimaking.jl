@@ -1,0 +1,446 @@
+struct DRIMaking <: AbstractAsset
+    id::AssetId
+    drimaking_transform::Transformation
+    ironore_edge::Edge{<:IronOre}
+    coal_edge::Edge{<:Coal}
+    natgas_edge::Edge{NaturalGas}
+    hydrogen_edge::Edge{Hydrogen}
+    steelscrap_edge::EdgeWithoutUC{SteelScrap}
+    elec_edge::Edge{Electricity}
+    dri_edge::Edge{DRI}
+    co2_edge::Edge{CO2}
+    co2_captured_edge::Edge{CO2Captured}
+end
+
+function default_data(t::Type{DRIMaking}, id=missing, style="full")
+    if style == "full"
+        return full_default_data(t, id)
+    else
+        return simple_default_data(t, id)
+    end
+end
+
+function full_default_data(::Type{DRIMaking}, id=missing)
+    return OrderedDict{Symbol,Any}(
+        :id => id,
+        :transforms => @transform_data(
+            :timedata => "DRI",
+            :constraints => Dict{Symbol, Bool}(
+                :BalanceConstraint => true,
+            ),
+            :ironore_consumption => 0.0,
+            :coal_consumption => 0.0,
+            :natgas_consumption => 0.0,
+            :hydrogen_consumption => 0.0,
+            :steelscrap_consumption => 0.0,
+            :electricity_consumption => 0.0,
+            :emission_rate => 0.0,
+            :capture_rate => 0.0
+        ),
+        :edges => Dict{Symbol,Any}(
+            :dri_edge => @edge_data(
+                :commodity => "DRI",
+                :has_capacity => true,
+                :can_retire => true,
+                :can_expand => true,
+                :constraints => Dict{Symbol, Bool}(
+                    :CapacityConstraint => true,
+                ),
+            ),
+            :ironore_edge => @edge_data(
+                :commodity => "IronOre"
+            ),
+            :coal_edge => @edge_data(
+                :commodity => "Coal"
+            ),
+            :natgas_edge => @edge_data(
+                :commodity => "NaturalGas"
+            ),
+            :hydrogen_edge => @edge_data(
+                :commodity => "Hydrogen"
+            ),
+            :steelscrap_edge => @edge_data(
+                :commodity => "SteelScrap"
+            ),
+            :elec_edge => @edge_data(
+                :commodity => "Electricity"
+            ),
+            :co2_edge => @edge_data(
+                :commodity => "CO2"
+            ),
+            :co2_captured_edge => @edge_data(
+                :commodity => "CO2Captured"
+            )
+        ),
+    )
+end
+
+function simple_default_data(::Type{DRIMaking}, id=missing)
+    return OrderedDict{Symbol,Any}(
+        :id => id,
+        :location => missing,
+        :can_expand => true,
+        :can_retire => true,
+        :existing_capacity => 0.0,
+        :capacity_size => 1.0,
+        :ironore_consumption => 0.0,
+        :coal_consumption => 0.0,
+        :natgas_consumption => 0.0,
+        :hydrogen_consumption => 0.0,
+        :steelscrap_consumption => 0.0,
+        :electricity_consumption => 0.0,
+        :emission_rate => 0.0,
+        :capture_rate => 0.0,
+        :investment_cost => 0.0,
+        :fixed_om_cost => 0.0,
+        :variable_om_cost => 0.0,
+    )
+end
+
+
+function make(asset_type::Type{DRIMaking}, data::AbstractDict{Symbol,Any}, system::System)
+    id = AssetId(data[:id])
+    location = as_symbol_or_missing(get(data, :location, missing))
+
+    @setup_data(asset_type, data, id)
+
+    drimaking_key = :transforms
+    @process_data(
+        transform_data,
+        data[drimaking_key],
+        [
+            (data[drimaking_key], key),
+            (data[drimaking_key], Symbol("transform_", key)),
+            (data, Symbol("transform_", key)),
+            (data, key),
+        ]
+    )
+    drimaking_transform = Transformation(;
+        id = Symbol(id, "_", drimaking_key),
+        timedata = system.time_data[Symbol(transform_data[:timedata])],
+        location = location,
+        constraints = get(transform_data, :constraints, [BalanceConstraint()]),
+    )
+
+    # iron ore edge
+
+    ironore_edge_key = :ironore_edge
+    @process_data(
+        ironore_edge_data,
+        data[:edges][ironore_edge_key],
+        [
+            (data[:edges][ironore_edge_key], key),
+            (data[:edges][ironore_edge_key], Symbol("ironore_", key)),
+            (data, Symbol("ironore_", key)),
+        ]
+    )
+    commodity_symbol = Symbol(ironore_edge_data[:commodity])
+    commodity = commodity_types()[commodity_symbol]
+    @start_vertex(
+        ironore_start_node,
+        ironore_edge_data,
+        commodity,
+        [(ironore_edge_data, :start_vertex), (data, :location)],
+    )
+    ironore_end_node = drimaking_transform
+    ironore_edge = Edge(
+        Symbol(id, "_", ironore_edge_key),
+        ironore_edge_data,
+        system.time_data[commodity_symbol],
+        commodity,
+        ironore_start_node,
+        ironore_end_node,
+    )
+
+    # coal edge
+
+    coal_edge_key = :coal_edge
+    @process_data(
+        coal_edge_data,
+        data[:edges][coal_edge_key],
+        [
+            (data[:edges][coal_edge_key], key),
+            (data[:edges][coal_edge_key], Symbol("coal_", key)),
+            (data, Symbol("coal_", key)),
+        ]
+    )
+    commodity_symbol = Symbol(coal_edge_data[:commodity])
+    commodity = commodity_types()[commodity_symbol]
+    @start_vertex(
+        coal_start_node,
+        coal_edge_data,
+        commodity,
+        [(coal_edge_data, :start_vertex), (data, :location)],
+    )
+    coal_end_node = drimaking_transform
+    coal_edge = Edge(
+        Symbol(id, "_", coal_edge_key),
+        coal_edge_data,
+        system.time_data[commodity_symbol],
+        commodity,
+        coal_start_node,
+        coal_end_node,
+    )
+
+    # natural gas edge
+
+    natgas_edge_key = :natgas_edge
+    @process_data(
+        natgas_edge_data,
+        data[:edges][natgas_edge_key],
+        [
+            (data[:edges][natgas_edge_key], key),
+            (data[:edges][natgas_edge_key], Symbol("natgas_", key)),
+            (data, Symbol("natgas_", key)),
+        ]
+    )
+    @start_vertex(
+        natgas_start_node,
+        natgas_edge_data,
+        NaturalGas,
+        [(natgas_edge_data, :start_vertex), (data, :location)],
+    )
+    natgas_end_node = drimaking_transform
+    natgas_edge = Edge(
+        Symbol(id, "_", natgas_edge_key),
+        natgas_edge_data,
+        system.time_data[:NaturalGas],
+        NaturalGas,
+        natgas_start_node,
+        natgas_end_node,
+    )
+
+    # hydrogen edge
+
+    hydrogen_edge_key = :hydrogen_edge
+    @process_data(
+        hydrogen_edge_data,
+        data[:edges][hydrogen_edge_key],
+        [
+            (data[:edges][hydrogen_edge_key], key),
+            (data[:edges][hydrogen_edge_key], Symbol("hydrogen_", key)),
+            (data, Symbol("hydrogen_", key)),
+        ]
+    )
+    @start_vertex(
+        hydrogen_start_node,
+        hydrogen_edge_data,
+        Hydrogen,
+        [(hydrogen_edge_data, :start_vertex), (data, :location)],
+    )
+    hydrogen_end_node = drimaking_transform
+    hydrogen_edge = Edge(
+        Symbol(id, "_", hydrogen_edge_key),
+        hydrogen_edge_data,
+        system.time_data[:Hydrogen],
+        Hydrogen,
+        hydrogen_start_node,
+        hydrogen_end_node,
+    )
+
+    # steel scrap edge
+
+    steelscrap_edge_key = :steelscrap_edge
+    @process_data(
+        steelscrap_edge_data,
+        data[:edges][steelscrap_edge_key],
+        [
+            (data[:edges][steelscrap_edge_key], key),
+            (data[:edges][steelscrap_edge_key], Symbol("steelscrap_", key)),
+            (data, Symbol("steelscrap_", key)),
+        ]
+    )
+    @start_vertex(
+        steelscrap_start_node,
+        steelscrap_edge_data,
+        SteelScrap,
+        [(steelscrap_edge_data, :start_vertex), (data, :location)],
+    )
+    steelscrap_end_node = drimaking_transform
+    if get(steelscrap_edge_data, :unidirectional, true)
+        steelscrap_edge = Edge(
+            Symbol(id, "_", steelscrap_edge_key),
+            steelscrap_edge_data,
+            system.time_data[:SteelScrap],
+            SteelScrap,
+            steelscrap_start_node,
+            steelscrap_end_node,
+        )
+    else
+        steelscrap_edge = BidirectionalEdge(
+            Symbol(id, "_", steelscrap_edge_key),
+            steelscrap_edge_data,
+            system.time_data[:SteelScrap],
+            SteelScrap,
+            steelscrap_start_node,
+            steelscrap_end_node,
+        )
+    end
+
+    # electricity edge
+
+    elec_edge_key = :elec_edge
+    @process_data(
+        elec_edge_data,
+        data[:edges][elec_edge_key],
+        [
+            (data[:edges][elec_edge_key], key),
+            (data[:edges][elec_edge_key], Symbol("elec_", key)),
+            (data, Symbol("elec_", key)),
+        ]
+    )
+    @start_vertex(
+        elec_start_node,
+        elec_edge_data,
+        Electricity,
+        [(elec_edge_data, :start_vertex), (data, :location)],
+    )
+    elec_end_node = drimaking_transform
+    elec_edge = Edge(
+        Symbol(id, "_", elec_edge_key),
+        elec_edge_data,
+        system.time_data[:Electricity],
+        Electricity,
+        elec_start_node,
+        elec_end_node,
+    )
+
+    # CO2 edge
+
+    co2_edge_key = :co2_edge
+    @process_data(
+        co2_edge_data,
+        data[:edges][co2_edge_key],
+        [
+            (data[:edges][co2_edge_key], key),
+            (data[:edges][co2_edge_key], Symbol("co2_", key)),
+            (data, Symbol("co2_", key)),
+        ]
+    )
+    co2_start_node = drimaking_transform
+    @end_vertex(
+        co2_end_node,
+        co2_edge_data,
+        CO2,
+        [(co2_edge_data, :end_vertex), (data, :co2_sink), (data, :location)],
+    )
+    co2_edge = Edge(
+        Symbol(id, "_", co2_edge_key),
+        co2_edge_data,
+        system.time_data[:CO2],
+        CO2,
+        co2_start_node,
+        co2_end_node,
+    )
+    co2_edge.constraints = Vector{AbstractTypeConstraint}()
+
+    # CO2 captured edge
+
+    co2_captured_edge_key = :co2_captured_edge
+    @process_data(
+        co2_captured_edge_data,
+        data[:edges][co2_captured_edge_key],
+        [
+            (data[:edges][co2_captured_edge_key], key),
+            (data[:edges][co2_captured_edge_key], Symbol("co2_captured_", key)),
+            (data, Symbol("co2_captured_", key)),
+        ]
+    )
+    co2_captured_start_node = drimaking_transform
+    @end_vertex(
+        co2_captured_end_node,
+        co2_captured_edge_data,
+        CO2Captured,
+        [(co2_captured_edge_data, :end_vertex), (data, :co2_sink), (data, :location)],
+    )
+    co2_captured_edge = Edge(
+        Symbol(id, "_", co2_captured_edge_key),
+        co2_captured_edge_data,
+        system.time_data[:CO2Captured],
+        CO2Captured,
+        co2_captured_start_node,
+        co2_captured_end_node,
+    )
+
+    # DRI edge (output)
+
+    dri_edge_key = :dri_edge
+    @process_data(
+        dri_edge_data,
+        data[:edges][dri_edge_key],
+        [
+            (data[:edges][dri_edge_key], key),
+            (data[:edges][dri_edge_key], Symbol("dri_", key)),
+            (data, Symbol("dri_", key)),
+            (data, key),
+        ]
+    )
+    dri_start_node = drimaking_transform
+    @end_vertex(
+        dri_end_node,
+        dri_edge_data,
+        DRI,
+        [(dri_edge_data, :end_vertex), (data, :location)],
+    )
+    dri_edge = Edge(
+        Symbol(id, "_", dri_edge_key),
+        dri_edge_data,
+        system.time_data[:DRI],
+        DRI,
+        dri_start_node,
+        dri_end_node,
+    )
+    dri_edge.constraints = get(
+        dri_edge_data,
+        :constraints,
+        [MustRunConstraint()])
+
+    # stoichiometry
+    drimaking_transform.balance_data = Dict(
+        :ironore_consumption => Dict(
+            dri_edge.id => get(transform_data, :ironore_consumption, 0.0),
+            ironore_edge.id => 1.0
+        ),
+        :coal_consumption => Dict(
+            dri_edge.id => get(transform_data, :coal_consumption, 0.0),
+            coal_edge.id => 1.0
+        ),
+        :natgas_consumption => Dict(
+            dri_edge.id => get(transform_data, :natgas_consumption, 0.0),
+            natgas_edge.id => 1.0
+        ),
+        :hydrogen_consumption => Dict(
+            dri_edge.id => get(transform_data, :hydrogen_consumption, 0.0),
+            hydrogen_edge.id => 1.0
+        ),
+        :steelscrap_consumption => Dict(
+            dri_edge.id => get(transform_data, :steelscrap_consumption, 0.0),
+            steelscrap_edge.id => 1.0
+        ),
+        :electricity_consumption => Dict(
+            dri_edge.id => get(transform_data, :electricity_consumption, 0.0),
+            elec_edge.id => 1.0
+        ),
+        :emissions => Dict(
+            dri_edge.id => get(transform_data, :emission_rate, 0.0) * (1 - get(transform_data, :capture_rate, 0.0)),
+            co2_edge.id => -1.0,
+        ),
+        :capture => Dict(
+            dri_edge.id => get(transform_data, :emission_rate, 0.0) * get(transform_data, :capture_rate, 0.0),
+            co2_captured_edge.id => -1.0,
+        )
+    )
+
+    return DRIMaking(id,
+        drimaking_transform,
+        ironore_edge,
+        coal_edge,
+        natgas_edge,
+        hydrogen_edge,
+        steelscrap_edge,
+        elec_edge,
+        dri_edge,
+        co2_edge,
+        co2_captured_edge
+    )
+end
