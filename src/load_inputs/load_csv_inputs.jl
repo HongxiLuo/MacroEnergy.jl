@@ -207,6 +207,26 @@ function extract_data!(json_data::AbstractDict{Symbol, <:Any}, row_data::Abstrac
     end
 end
 
+function nodes_extract_data!(json_data::AbstractDict{Symbol, <:Any}, row_data::AbstractDict{Symbol, Any}, vec_data::VectorData, prefix::AbstractString="", nesting_str::AbstractString="--")
+    for (key, value) in json_data
+        if value isa Dict
+            new_prefix = prefix * string(key) * nesting_str
+            nodes_extract_data!(value, row_data, vec_data, new_prefix, nesting_str)
+        elseif value isa Vector
+            if length(value) == 1
+                row_data[Symbol(prefix * string(key))] = value[1]
+            else
+                header = Symbol(new_header(vec_data, prefix * string(key)))
+                add!(vec_data, value, header)
+                row_data[Symbol(prefix * string(key) * nesting_str * "timeseries" * nesting_str * "path")] = vec_data.file_path
+                row_data[Symbol(prefix * string(key) * nesting_str * "timeseries" * nesting_str * "header")] = header
+            end
+        else
+            row_data[Symbol(prefix * string(key))] = value
+        end
+    end
+end
+
 Base.@kwdef struct RowData
     asset_data::Dict{Symbol, Vector{OrderedDict{Symbol, Any}}} = Dict{Symbol, Vector{OrderedDict{Symbol, Any}}}()
     assets::Set{Symbol} = Set{Symbol}()
@@ -323,6 +343,48 @@ function json_to_csv(json_data::Vector{Dict{Symbol, Any}}, row_data::RowData=Row
     for json in json_data
         merge!(row_data, json_to_csv(json, RowData(), vec_data, nesting_str))
     end
+    return row_data
+end
+
+function nodes_json_to_nodes_csv(json_data::AbstractDict{Symbol, Any}, row_data::RowData=RowData(), vec_data::VectorData=VectorData(), nesting_str::AbstractString="--")
+    if !haskey(json_data, :type)
+        @debug("Missing :type key in $(json_data)")
+        for (key, value) in json_data
+            if key in [:global_data, :instance_data]
+                error("Invalid JSON data format: $key should not be present without a :type key")
+            end
+            merge!(row_data, nodes_json_to_nodes_csv(value, RowData(), vec_data, nesting_str))
+        end
+        return row_data
+    end
+
+    asset_type = Symbol(json_data[:type])
+
+    global_row_data = OrderedDict{Symbol, Any}()
+    if haskey(json_data, :global_data)
+        nodes_extract_data!(json_data[:global_data], global_row_data, vec_data, "", nesting_str)
+    end
+
+    if !haskey(json_data, :instance_data)
+        return RowData(OrderedDict(asset_type => global_row_data))
+    end
+
+    for instance_data in json_data[:instance_data]
+        asset_row_data = OrderedDict{Symbol, Any}(
+            :Type => string(asset_type),
+            :id => instance_data[:id]
+        )
+        delete!(instance_data, :id)
+        Base.merge!(asset_row_data, deepcopy(global_row_data))
+        nodes_extract_data!(instance_data, asset_row_data, vec_data, "", nesting_str)
+        push!(row_data, asset_type, asset_row_data)
+    end
+
+    if vec_data.max_length > 0
+        fillmissing!(vec_data)
+        write_csv(vec_data.file_path, DataFrame(vec_data.data, vec_data.headers))
+    end
+
     return row_data
 end
 
