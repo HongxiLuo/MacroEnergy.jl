@@ -104,8 +104,33 @@ function csv_to_json(file_path::AbstractString, nesting_str::AbstractString="--"
     for row in data
         json_data = Dict{Symbol, Any}()
         for (col_name, dict_address) in column_map
+            insert_data(json_data, dict_address, row[col_name])
+        end
+        Base.push!(all_json_data, json_data)
+    end
+
+    return all_json_data
+end
+
+function nodes_csv_to_nodes_json(file_path::AbstractString, nesting_str::AbstractString="--")::Vector{Dict{Symbol,Any}}
+    data = duckdb_read(file_path)
+    if !validate_csv_data(data)
+        return Vector{Dict{Symbol,Any}}()
+    end
+
+    column_map = Dict{Symbol, Any}()
+    for header in data.names
+        props = Symbol.(split(string(header), nesting_str))
+        column_map[header] = [:instance_data, props...]
+    end
+    column_map[:Type] = [:type]
+
+    all_json_data = Vector{Dict{Symbol, Any}}()
+    for row in data
+        json_data = Dict{Symbol, Any}()
+        for (col_name, dict_address) in column_map
             val = row[col_name]
-            ismissing(val) && continue  # treat empty CSV cells like absent JSON fields
+            ismissing(val) && continue
             insert_data(json_data, dict_address, val)
         end
         Base.push!(all_json_data, json_data)
