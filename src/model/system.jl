@@ -6,6 +6,7 @@ mutable struct System <: AbstractSystem
     assets::Vector{AbstractAsset}
     locations::Vector{Union{Node, Location}}
     input_data::Vector{Dict{Symbol,Any}}
+    constraints::Vector{AbstractTypeConstraint}
 end
 
 """
@@ -65,6 +66,8 @@ ids = location_ids(system)
 """
 location_ids(system::System) = map(x -> x.id, system.locations)
 
+period_index(system::System) = first(values(system.time_data)).period_index;
+
 """
     get_asset_types(system::System)
 
@@ -105,7 +108,8 @@ function empty_system(data_dirpath::String)
         Dict{Symbol,TimeData}(),
         [],
         [],
-        []
+        [],
+        Vector{AbstractTypeConstraint}()
     )
 end
 
