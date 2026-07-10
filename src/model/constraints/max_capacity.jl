@@ -88,38 +88,49 @@ end
 # variable summed over each capped edge) and `sense` (`:leq` for upper bounds, `:geq` for lower bounds).
 # When `loc` is given, only assets whose capped edge sits in that location contribute (per-location
 # scope); otherwise all matched assets contribute (system scope).
+#
+# `ct.config` is either a single grouped spec — `Dict(:tech => Dict(asset type => Dict(:edge, :coeff)),
+# :value => cap)`, summing `coeff * var(edge)` across every listed asset type into one constraint — or,
+# for backward compatibility, a Dict of independent single-type specs `asset type => Dict(:edge, :value)`.
 function build_grouped_capacity_constraints!(ct, system::System, model::Model;
         var::Function, sense::Symbol, name::String, loc::Union{Missing,Symbol}=missing)
     ismissing(ct.config) && error("$name has no configuration; it must be enabled with a config object in the `constraints` block")
 
     ct.constraint_ref = Dict{Symbol,Any}()
-    for (at, spec) in ct.config
-        constraint_assets = resolve_assets_by_type_key(system, at)
-        # If the asset type is not recognized anywhere in the system, skip it entirely (no constraint).
-        if isempty(constraint_assets)
-            @warn "$name: asset type `$at` matched no assets in the system; skipping"
-            continue
-        end
-        edge_field = Symbol(spec[:edge])
+    groups = haskey(ct.config, :tech) ?
+        [(:tech, ct.config[:tech], ct.config[:value])] :
+        [(at, Dict(at => spec), spec[:value]) for (at, spec) in ct.config]
+
+    for (key, tech, value) in groups
         total_capacity = AffExpr(0.0)
         contributed = false
-        for a in constraint_assets
-            edge_field in fieldnames(typeof(a)) || error("$name: asset type $at (`$(get_type(a))`) has no edge field `$edge_field`")
-            e = get_component_by_fieldname(a, edge_field)
-            if !has_capacity(e)
-                @warn "$name: edge field `$edge_field` of asset $(id(a)) (`$(get_type(a))`) has no capacity variable; skipping"
+        for (at, tspec) in tech
+            constraint_assets = resolve_assets_by_type_key(system, at)
+            # If the asset type is not recognized anywhere in the system, skip it entirely (no contribution).
+            if isempty(constraint_assets)
+                @warn "$name: asset type `$at` matched no assets in the system; skipping"
                 continue
             end
-            # Per-location scope: skip assets not located in `loc`.
-            ismissing(loc) || capped_edge_location(e) == loc || continue
-            add_to_expression!(total_capacity, var(e))
-            contributed = true
+            edge_field = Symbol(tspec[:edge])
+            coeff = get(tspec, :coeff, 1)
+            for a in constraint_assets
+                edge_field in fieldnames(typeof(a)) || error("$name: asset type $at (`$(get_type(a))`) has no edge field `$edge_field`")
+                e = get_component_by_fieldname(a, edge_field)
+                if !has_capacity(e)
+                    @warn "$name: edge field `$edge_field` of asset $(id(a)) (`$(get_type(a))`) has no capacity variable; skipping"
+                    continue
+                end
+                # Per-location scope: skip assets not located in `loc`.
+                ismissing(loc) || capped_edge_location(e) == loc || continue
+                add_to_expression!(total_capacity, coeff, var(e))
+                contributed = true
+            end
         end
-        # Skip empty groups (e.g. a location with no assets of this type): no constraint needed.
+        # Skip empty groups (e.g. a location with no assets of any configured type): no constraint needed.
         contributed || continue
-        ct.constraint_ref[at] = sense === :leq ?
-            @constraint(model, total_capacity <= spec[:value]) :
-            @constraint(model, total_capacity >= spec[:value])
+        ct.constraint_ref[key] = sense === :leq ?
+            @constraint(model, total_capacity <= value) :
+            @constraint(model, total_capacity >= value)
     end
     return nothing
 end
