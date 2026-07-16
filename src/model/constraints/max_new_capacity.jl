@@ -3,6 +3,8 @@ Base.@kwdef mutable struct MaxNewCapacityConstraint <: PlanningConstraint
     constraint_dual::Union{Missing,Vector{Float64},Dict{Symbol,Float64}} = missing
     constraint_ref::Union{Missing,JuMPConstraint,Dict{Symbol,Any}} = missing
     # System-wide / per-location configuration: asset-type key => Dict(:edge => fieldname, :value => cap).
+    # `:value` may also be the sentinel string "existing_capacity", in which case the cap tracks the group's 
+    # total existing capacity — i.e. the previous stage's final capacity.
     # Populated at load time from the `constraints` block in system_data.json / locations.json.
     config::Union{Missing,Dict{Symbol,Any}} = missing
 end
