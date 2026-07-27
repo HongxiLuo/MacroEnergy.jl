@@ -556,6 +556,14 @@ function write_cost_breakdown_files!(
     discounted::Bool=false,
     scaling::Float64
 )
+    # Write costs by id
+    costs_by_id = aggregate_costs_by_id(detailed_costs)
+    add_total_row!(costs_by_id, :id)
+    !isnothing(validate_model) && validate_total_cost(costs_by_id, validate_model, discounted, scaling)
+    layout== "wide" && (costs_by_id = reshape_costs_wide(costs_by_id, :id))
+    @info "Writing detailed $(discounted ? "discounted" : "undiscounted") costs by id to $(joinpath(results_dir, "$(prefix)_by_id.csv"))"
+    write_dataframe(joinpath(results_dir, "$(prefix)_by_id.csv"), costs_by_id, String[])
+
     # Write costs by type
     costs_by_type = aggregate_costs_by_type(detailed_costs)
     add_total_row!(costs_by_type, :type)
@@ -563,7 +571,7 @@ function write_cost_breakdown_files!(
     layout == "wide" && (costs_by_type = reshape_costs_wide(costs_by_type, :type))
     @info "Writing detailed $(discounted ? "discounted" : "undiscounted") costs by type to $(joinpath(results_dir, "$(prefix)_by_type.csv"))"
     write_dataframe(joinpath(results_dir, "$(prefix)_by_type.csv"), costs_by_type, String[])
-    
+
     # Write costs by zone
     costs_by_zone = aggregate_costs_by_zone(detailed_costs)
     add_total_row!(costs_by_zone, :zone)
@@ -571,7 +579,7 @@ function write_cost_breakdown_files!(
     layout == "wide" && (costs_by_zone = reshape_costs_wide(costs_by_zone, :zone))
     @info "Writing detailed $(discounted ? "discounted" : "undiscounted") costs by zone to $(joinpath(results_dir, "$(prefix)_by_zone.csv"))"
     write_dataframe(joinpath(results_dir, "$(prefix)_by_zone.csv"), costs_by_zone, String[])
-    
+
     return nothing
 end
 
@@ -581,7 +589,7 @@ end
 Collect all detailed costs from the system, returning both discounted and undiscounted DataFrames.
 Uses period cost attributes (for edges and storages) and economics.jl for discount factors.
 
-Returns a NamedTuple `(discounted=df_discounted, undiscounted=df_undiscounted)` with the two 
+Returns a NamedTuple `(discounted=df_discounted, undiscounted=df_undiscounted)` with the two
 DataFrames having columns: zone, type, category, value.
 """
 function get_detailed_costs(system::System, settings::NamedTuple, scaling::Float64)
@@ -589,6 +597,7 @@ function get_detailed_costs(system::System, settings::NamedTuple, scaling::Float
     undo_discount_fixed_costs!(system, settings)
 
     zones = String[]
+    ids = String[]
     types = String[]
     categories = Symbol[]
     values_discounted = Float64[]
@@ -611,10 +620,11 @@ function get_detailed_costs(system::System, settings::NamedTuple, scaling::Float
             attributed_fuel_cost_by_node[id(source_node)] = get(attributed_fuel_cost_by_node, id(source_node), 0.0) + fuel
         end
 
-        (inv_pv == 0 && inv_cf == 0 && fom_pv == 0 && fom_cf == 0 && vom == 0 && fuel == 0 && startup == 0) && continue
+        # (inv_pv == 0 && inv_cf == 0 && fom_pv == 0 && fom_cf == 0 && vom == 0 && fuel == 0 && startup == 0) && continue
 
         zone = get_zone_name(e)
         asset_type = get_type(edge_asset_map[id(e)])
+        asset_id = string(get_resource_id(e, edge_asset_map))
 
         for (category, cost_pv, cost_cf) in [
             (:Investment, inv_pv, inv_cf),
@@ -626,6 +636,7 @@ function get_detailed_costs(system::System, settings::NamedTuple, scaling::Float
             (cost_pv == 0 && cost_cf == 0) && continue
             push!(zones, zone)
             push!(types, asset_type)
+            push!(ids, asset_id)
             push!(categories, category)
             push!(values_discounted, cost_pv)
             push!(values_undiscounted, cost_cf)
@@ -637,10 +648,11 @@ function get_detailed_costs(system::System, settings::NamedTuple, scaling::Float
         inv_pv, inv_cf = compute_investment_cost(g)
         fom_pv, fom_cf = compute_fixed_om_cost(g)
 
-        (inv_pv == 0 && inv_cf == 0 && fom_pv == 0 && fom_cf == 0) && continue
+        # (inv_pv == 0 && inv_cf == 0 && fom_pv == 0 && fom_cf == 0) && continue
 
         zone = get_zone_name(g)
         asset_type = get_type(storage_asset_map[id(g)])
+        asset_id = string(get_resource_id(g, storage_asset_map))
 
         for (category, cost_pv, cost_cf) in [
             (:Investment, inv_pv, inv_cf),
@@ -648,6 +660,7 @@ function get_detailed_costs(system::System, settings::NamedTuple, scaling::Float
         ]
             (cost_pv == 0 && cost_cf == 0) && continue
             push!(zones, zone)
+            push!(ids, asset_id)
             push!(types, asset_type)
             push!(categories, category)
             push!(values_discounted, cost_pv)
@@ -718,8 +731,8 @@ function get_detailed_costs(system::System, settings::NamedTuple, scaling::Float
     end
 
     return (
-        discounted = DataFrame(zone=zones, type=types, category=categories, value=values_discounted),
-        undiscounted = DataFrame(zone=zones, type=types, category=categories, value=values_undiscounted)
+        discounted = DataFrame(zone=zones, type=types, id=ids, category=categories, value=values_discounted),
+        undiscounted = DataFrame(zone=zones, type=types, id=ids, category=categories, value=values_undiscounted)
     )
 end
 
@@ -866,6 +879,13 @@ function aggregate_costs_by_type(costs_df::DataFrame)
     return combine(groupby(costs_df, [:type, :category]), :value => sum => :value)
 end
 
+function aggregate_costs_by_id(costs_df::DataFrame)
+    if isempty(costs_df)
+        return DataFrame(id=String[], category=Symbol[], value=Float64[])
+    end
+    return combine(groupby(costs_df, [:id, :category]), :value => sum => :value)
+end
+
 """
     aggregate_costs_by_zone(costs_df::DataFrame)
 
@@ -891,7 +911,7 @@ function aggregate_operational_costs(cost_dfs::Vector{DataFrame})
     if all(isempty, cost_dfs)
         return DataFrame(zone=String[], type=String[], category=Symbol[], value=Float64[])
     end
-    
+
     combined = reduce(vcat, filter(!isempty, cost_dfs))
     return combine(groupby(combined, [:zone, :type, :category]), :value => sum => :value)
 end
