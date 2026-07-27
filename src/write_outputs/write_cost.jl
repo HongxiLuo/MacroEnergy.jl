@@ -679,6 +679,7 @@ function get_detailed_costs(system::System, settings::NamedTuple, scaling::Float
         if nsd_cost > 0
             push!(zones, zone)
             push!(types, asset_type)
+            push!(ids, string(id(loc)))
             push!(categories, :NonServedDemand)
             push!(values_discounted, nsd_cost)
             push!(values_undiscounted, nsd_cost)
@@ -688,6 +689,7 @@ function get_detailed_costs(system::System, settings::NamedTuple, scaling::Float
         if supply_cost > 0
             push!(zones, zone)
             push!(types, asset_type)
+            push!(ids, string(id(loc)))
             push!(categories, :Supply)
             push!(values_discounted, supply_cost)
             push!(values_undiscounted, supply_cost)
@@ -697,6 +699,7 @@ function get_detailed_costs(system::System, settings::NamedTuple, scaling::Float
         if slack_cost > 0
             push!(zones, zone)
             push!(types, asset_type)
+            push!(ids, string(id(loc)))
             push!(categories, :UnmetPolicyPenalty)
             push!(values_discounted, slack_cost)
             push!(values_undiscounted, slack_cost)
