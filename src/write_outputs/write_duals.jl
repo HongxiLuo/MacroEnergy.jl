@@ -108,29 +108,35 @@ When `with_timedata` is `true`, `timedata_vec` contains the `TimeData` for each 
 function _extract_balance_duals(system::System, scaling::Float64, var_cost_discount::Float64; with_timedata::Bool=false)
     balance_duals = Vector{Vector{Float64}}()
     node_ids = Vector{Symbol}()
+    seen_node_ids = Set{Symbol}()
     timedata_vec = with_timedata ? Vector{TimeData}() : nothing
 
     for node in filter(n -> n isa Node, system.locations)
+        # Skip nodes already processed (e.g. duplicate location entries)
+        # to avoid duplicate column names when building the wide DataFrame.
+        id(node) in seen_node_ids && continue
+
         constraint = get_constraint_by_type(node, BalanceConstraint)
         isnothing(constraint) && continue
         # Skip if constraint has no reference or dual values
         if ismissing(constraint.constraint_ref) && ismissing(constraint.constraint_dual)
             continue
         end
-        
+
         # Extract dual values if not already extracted
         if ismissing(constraint_dual(constraint))
             set_constraint_dual!(constraint, node)
         end
-        
+
         # Get the dictionary of dual values for all balance equations
         duals_dict = constraint_dual(constraint)
-        
+
         # Export only the :demand balance duals (skip if not present)
         !haskey(duals_dict, :demand) && continue
-        
+
         # Add node ID
         push!(node_ids, id(node))
+        push!(seen_node_ids, id(node))
 
         # Compute subperiod weights and rescale dual values
         weights = Float64[subperiod_weight(node, current_subperiod(node, t)) for t in time_interval(node)]
