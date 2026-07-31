@@ -108,14 +108,9 @@ When `with_timedata` is `true`, `timedata_vec` contains the `TimeData` for each 
 function _extract_balance_duals(system::System, scaling::Float64, var_cost_discount::Float64; with_timedata::Bool=false)
     balance_duals = Vector{Vector{Float64}}()
     node_ids = Vector{Symbol}()
-    seen_node_ids = Set{Symbol}()
     timedata_vec = with_timedata ? Vector{TimeData}() : nothing
 
     for node in filter(n -> n isa Node, system.locations)
-        # Skip nodes already processed (e.g. duplicate location entries)
-        # to avoid duplicate column names when building the wide DataFrame.
-        id(node) in seen_node_ids && continue
-
         constraint = get_constraint_by_type(node, BalanceConstraint)
         isnothing(constraint) && continue
         # Skip if constraint has no reference or dual values
