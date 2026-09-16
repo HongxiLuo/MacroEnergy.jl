@@ -10,7 +10,15 @@ function default_case_settings()
         :ParameterScaling => false,
         :ParameterScalingFactor => 1e3,
         :SolutionAlgorithm => "Monolithic",
-        :ExpansionHorizon => "PerfectForesight"
+        :ExpansionHorizon => "PerfectForesight",
+        :MGA => Dict(
+            :Enabled => false,
+            :Epsilon => 0.01,
+            :Groupings => ["location", "technology"],
+            :Quantity => "capacity",
+            :MGAAlgorithm => "RandomVector",
+            :NumIterations => 10
+        )
     )
 end
 

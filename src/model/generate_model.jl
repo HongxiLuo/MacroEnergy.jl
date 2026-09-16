@@ -24,6 +24,13 @@ function generate_model(case::Case, opt::Optimizer, ::Monolithic)
         add_period_to_model!(model, system, next, fixed_cost, investment_cost, om_fixed_cost, variable_cost)
     end
 
+    if mga_enabled(case)
+        @info(" -- Adding MGA variables")
+        for system in periods
+            add_mga_variables(system, model, case.settings.MGA)
+        end
+    end
+
     finalize_model_objective!(model, settings, fixed_cost, investment_cost, om_fixed_cost, variable_cost)
 
     scale_constraints!(case, model)

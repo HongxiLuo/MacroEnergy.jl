@@ -6,6 +6,7 @@ using DuckDB
 using DataFrames
 using OrderedCollections
 using JuMP
+using Random
 using HiGHS
 using Revise
 using InteractiveUtils

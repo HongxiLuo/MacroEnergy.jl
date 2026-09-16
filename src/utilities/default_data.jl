@@ -20,6 +20,8 @@ function edge_default_data()
         :min_retired_capacity => 0.0,
         :max_capacity => Inf,
         :max_new_capacity => Inf,
+        :mga_enabled => false,
+        :mga_group => missing,
         :integer_decisions => false,
         :loss_fraction => Float64[],
         :efficiency => 1.0,

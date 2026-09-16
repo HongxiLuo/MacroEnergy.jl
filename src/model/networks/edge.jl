@@ -26,6 +26,8 @@ macro AbstractEdgeBaseAttributes()
         loss_fraction::Vector{Float64} = $edge_defaults[:loss_fraction]
         max_capacity::Float64 = $edge_defaults[:max_capacity]
         max_new_capacity::Float64 = $edge_defaults[:max_new_capacity]
+        mga_enabled::Bool = $edge_defaults[:mga_enabled]
+        mga_group::Union{Missing, Symbol} = $edge_defaults[:mga_group]
         min_capacity::Float64 = $edge_defaults[:min_capacity]
         min_retired_capacity::Float64 = $edge_defaults[:min_retired_capacity]
         min_retired_capacity_track::Float64 = 0.0
@@ -332,6 +334,8 @@ function loss_fraction(e::AbstractEdge, t::Int64)
 end
 max_capacity(e::AbstractEdge) = e.max_capacity;
 max_new_capacity(e::AbstractEdge) = e.max_new_capacity;
+mga_enabled(e::AbstractEdge) = e.mga_enabled;
+mga_group(e::AbstractEdge) = e.mga_group;
 min_capacity(e::AbstractEdge) = e.min_capacity;
 min_retired_capacity(e::AbstractEdge) = e.can_retire ? e.min_retired_capacity : 0.0;
 min_retired_capacity_track(e::AbstractEdge) = e.min_retired_capacity_track;
