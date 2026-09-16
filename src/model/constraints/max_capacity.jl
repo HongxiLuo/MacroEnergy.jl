@@ -103,6 +103,7 @@ function build_grouped_capacity_constraints!(ct, system::System, model::Model;
 
     for (key, tech, value) in groups
         total_capacity = AffExpr(0.0)
+        existing_capacity_total = 0.0
         contributed = false
         for (at, tspec) in tech
             constraint_assets = resolve_assets_by_type_key(system, at)
@@ -123,14 +124,24 @@ function build_grouped_capacity_constraints!(ct, system::System, model::Model;
                 # Per-location scope: skip assets not located in `loc`.
                 ismissing(loc) || capped_edge_location(e) == loc || continue
                 add_to_expression!(total_capacity, coeff, var(e))
+                existing_capacity_total += coeff * existing_capacity(e)
                 contributed = true
             end
         end
         # Skip empty groups (e.g. a location with no assets of any configured type): no constraint needed.
         contributed || continue
+        # `"existing_capacity"` is a sentinel (in place of a numeric cap) meaning "freeze this group
+        # at whatever capacity already exists"; resolve it to the accumulated existing capacity across
+        # the same edges just summed into `total_capacity`, rather than handing JuMP a string.
+        resolved_value = if value isa AbstractString
+            value == "existing_capacity" ? existing_capacity_total :
+                error("$name: unsupported value `\"$value\"`; only the `\"existing_capacity\"` sentinel is supported for a non-numeric value")
+        else
+            value
+        end
         ct.constraint_ref[key] = sense === :leq ?
-            @constraint(model, total_capacity <= value) :
-            @constraint(model, total_capacity >= value)
+            @constraint(model, total_capacity <= resolved_value) :
+            @constraint(model, total_capacity >= resolved_value)
     end
     return nothing
 end

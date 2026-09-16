@@ -26,11 +26,8 @@ function generate_model(case::Case, opt::Optimizer, ::Monolithic)
 
     finalize_model_objective!(model, settings, fixed_cost, investment_cost, om_fixed_cost, variable_cost)
 
-    if case.systems[1].settings.ConstraintScaling
-        @info "Scaling constraints and RHS"
-        scale_constraints!(model)
-    end
-    
+    scale_constraints!(case, model)
+
     @info(" -- Model generation complete, it took $(time() - start_time) seconds")
     
     return model
@@ -56,10 +53,7 @@ function generate_model(system::System, opt::Optimizer, settings::NamedTuple, ::
 
     finalize_model_objective!(model, settings, fixed_cost, investment_cost, om_fixed_cost, variable_cost)
 
-    if system.settings.ConstraintScaling
-        @info "Scaling constraints and RHS"
-        scale_constraints!(model)
-    end
+    scale_constraints!(system, model)
 
     return model
 
@@ -94,11 +88,8 @@ function generate_model(case::Case, opt::Dict{Symbol,Dict{Symbol,Any}}, ::Bender
     
     @info(" -- Planning problem generation complete, it took $(time() - start_time) seconds")
     
-    if case.systems[1].settings.ConstraintScaling
-        @info "Scaling constraints and RHS"
-        scale_constraints!(planning_model)
-    end
-    
+    scale_constraints!(case, planning_model)
+
     bd_setup = settings.BendersSettings
     subproblems, linking_variables_sub = generate_subproblems(
         periods_decomp, opt[:subproblems], settings,
@@ -129,11 +120,8 @@ function generate_model(system::System, opt::Dict{Symbol,Dict{Symbol,Any}}, sett
     
     finalize_planning_model_objective!(model, [system], settings, fixed_cost, investment_cost, om_fixed_cost)
     
-    if system.settings.ConstraintScaling
-        @info "Scaling constraints and RHS"
-        scale_constraints!(model)
-    end
-    
+    scale_constraints!(system, model)
+
     bd_setup = settings.BendersSettings
     subproblems, linking_variables_sub = generate_subproblems(
         period_decomp, opt[:subproblems], settings,

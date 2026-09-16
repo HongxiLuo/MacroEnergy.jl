@@ -149,6 +149,7 @@ function scale_constraints!(system::System, model::Model)
     if system.settings.ConstraintScaling
         @info "Scaling constraints and RHS"
         scale_constraints!(model)
+        repair_stale_constraint_refs!(system, model)
     end
     return nothing
 end
@@ -166,4 +167,100 @@ end
 function scale_constraints!(case::Case, models::Vector{Model})
     scale_constraints!(case.systems, models)
     return nothing
+end
+
+# A monolithic model (`generate_model(case::Case, ...)`) spans every period in `case.systems`
+# but is a single shared Model, so it needs its own overload: none of the above match one Case
+# against one Model rather than one System/Vector{System} against a matching Model/Vector{Model}.
+function scale_constraints!(case::Case, model::Model)
+    if case.systems[1].settings.ConstraintScaling
+        @info "Scaling constraints and RHS"
+        scale_constraints!(model)
+        repair_stale_constraint_refs!(case, model)
+    end
+    return nothing
+end
+
+# ------------------------------------------------------------------------------
+# Repairing constraint references invalidated by ConstraintScaling.
+#
+# MacroEnergyScaling.scale_constraints! rescales most constraints in place via
+# set_normalized_coefficient!/set_normalized_rhs (the constraint's index is unchanged). But a
+# constraint whose coefficients are simultaneously too large and too small can't be fixed with a
+# single multiplier, so it is instead deleted and rebuilt — possibly over new proxy variables —
+# by MacroEnergyScaling.replace_constraint!, which discards the new ConstraintRef instead of
+# returning it. Any `constraint_ref` MacroEnergy stored for that constraint before scaling is
+# left pointing at a deleted index.
+#
+# There is no reliable way to recover which new constraint replaced it after the fact: JuMP
+# string names are disabled by default (EnableJuMPStringNames), and proxy substitution can swap
+# out the variables entirely, so nothing about the new constraint is guaranteed to match the old
+# one. Rather than leave a dangling reference that throws far from its cause (e.g. deep inside
+# copy_case_model, or the next time someone reads a dual), reset it to `missing` — the same
+# sentinel already used for "no constraint" and already handled by downstream dual writers (see
+# write_duals.jl, benders_output_utilities.jl).
+# ------------------------------------------------------------------------------
+
+function repair_stale_constraint_refs!(systems::Vector{System}, model::Model)
+    for system in systems
+        for e in get_edges(system)
+            _repair_constraint_refs!(all_constraints(e), model)
+        end
+        for g in get_storages(system)
+            _repair_constraint_refs!(all_constraints(g), model)
+        end
+        for n in get_nodes(system)
+            _repair_constraint_refs!(all_constraints(n), model)
+            # Policy budget constraints (summed across subperiods) live in their own field,
+            # separate from `n.constraints`; see AbstractNodeBaseAttributes in node.jl.
+            _repaired_ref(policy_budgeting_constraints(n), model)
+        end
+        _repair_constraint_refs!(system.constraints, model)
+        for loc in system.locations
+            loc isa Location || continue
+            _repair_constraint_refs!(all_constraints(loc), model)
+        end
+    end
+    return nothing
+end
+repair_stale_constraint_refs!(system::System, model::Model) = repair_stale_constraint_refs!([system], model)
+repair_stale_constraint_refs!(case::Case, model::Model) = repair_stale_constraint_refs!(case.systems, model)
+
+function _repair_constraint_refs!(constraints::Vector{AbstractTypeConstraint}, model::Model)
+    for ct in constraints
+        hasfield(typeof(ct), :constraint_ref) || continue
+        setfield!(ct, :constraint_ref, _repaired_ref(getfield(ct, :constraint_ref), model))
+    end
+    return nothing
+end
+
+_repaired_ref(::Missing, ::Model) = missing
+function _repaired_ref(ref::ConstraintRef, model::Model)
+    is_valid(model, ref) && return ref
+    @warn "ConstraintScaling replaced a constraint MacroEnergy was tracking a reference to; its dual will no longer be recoverable."
+    return missing
+end
+function _repaired_ref(refs::Dict, model::Model)
+    # Some of these dicts are value-typed as `JuMPConstraint` (no `Missing` in the Union, e.g.
+    # Node.policy_budgeting_constraints), so an invalidated entry is dropped rather than set to
+    # `missing`. Consumers already treat a missing key the same as "no constraint here" (see
+    # write_duals.jl's `haskey` guards).
+    for key in collect(keys(refs))
+        fixed = _repaired_ref(refs[key], model)
+        if fixed === missing
+            delete!(refs, key)
+        else
+            refs[key] = fixed
+        end
+    end
+    return refs
+end
+# `constraint_ref` fields are typed `JuMPConstraint = Union{Array, Containers.DenseAxisArray,
+# Containers.SparseAxisArray, ConstraintRef}` (see MacroEnergy.jl) — the three container types
+# for `@constraint(model, [indices...], ...)` results all subtype AbstractArray.
+function _repaired_ref(refs::AbstractArray, model::Model)
+    for i in eachindex(refs)
+        refs[i] = _repaired_ref(refs[i], model)
+    end
+    return refs
 end
