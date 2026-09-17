@@ -95,7 +95,15 @@ function test_max_capacity()
             system = build_system()
             ctsys = MaxCapacityConstraint(; config = vre_cfg(1000.0))
             ctloc = MaxCapacityConstraint(; config = vre_cfg(300.0))
+            grouped = MaxCapacityConstraint(; config = Dict{Symbol,Any}(
+                :tech => Dict(:VRE => Dict(:edge => "edge", :coeff => 1)),
+                :value => 2000.0))
+            existing = MaxCapacityConstraint(; config = Dict{Symbol,Any}(
+                :tech => Dict(:VRE => Dict(:edge => "edge", :coeff => 1)),
+                :value => "existing_capacity"))
             push!(system.constraints, ctsys)
+            push!(system.constraints, grouped)
+            push!(system.constraints, existing)
             push!(system.locations, Location(; id = :A, system = system, constraints = [ctloc]))
 
             S = 1000.0
@@ -103,10 +111,14 @@ function test_max_capacity()
             # Cap values are scaled by 1/S, like other capacity inputs.
             @test ctsys.config[:VRE][:value] == 1.0
             @test ctloc.config[:VRE][:value] == 0.3
+            @test grouped.config[:value] == 2.0
+            @test existing.config[:value] == "existing_capacity"
 
             MacroEnergy.unscale!(system, S)
             @test ctsys.config[:VRE][:value] == 1000.0
             @test ctloc.config[:VRE][:value] == 300.0
+            @test grouped.config[:value] == 2000.0
+            @test existing.config[:value] == "existing_capacity"
         end
     end
     return nothing

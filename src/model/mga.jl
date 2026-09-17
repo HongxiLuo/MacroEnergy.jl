@@ -13,11 +13,17 @@ function run_mga(
     case::Case,
     EP::Model,
     path::AbstractString;
-    rng = Random.default_rng()
+    rng = Random.default_rng(),
+    least_cost_original = nothing
 )
     validate_mga(case)
-    # Make sure the least-cost model is ready before starting MGA
-    termination_status(EP) == MOI.OPTIMAL || error("MGA requires an optimal least-cost solution first.")
+    # An externally supplied baseline permits MGA without a least-cost solve.
+    if isnothing(least_cost_original)
+        termination_status(EP) == MOI.OPTIMAL || error("MGA requires an optimal least-cost solution first.")
+    else
+        isfinite(least_cost_original) && least_cost_original > 0 ||
+            throw(ArgumentError("least_cost_original must be finite and positive."))
+    end
     haskey(EP, :vMGA) && !isempty(EP[:vMGA]) || error("No MGA groups were added to the model.")
     println("MGA Module")
 
@@ -30,7 +36,9 @@ function run_mga(
 
     # Every MGA solve can cost up to epsilon more than the least-cost solution.
     # abs keeps positive epsilon a relaxation when the objective is negative.
-    least_cost = objective_value(EP)
+    parameter_scale = parameter_scaling_factor(get_settings(case))
+    least_cost = isnothing(least_cost_original) ? objective_value(EP) :
+        least_cost_original / parameter_scale^2
     budget_limit = least_cost + slack * abs(least_cost)
 
     jobs = create_mga_jobs(mga_groups, mga_settings, rng)
@@ -42,8 +50,17 @@ function run_mga(
     constraints_before = scaling ?
         Set(JuMP.all_constraints(EP; include_variable_in_set_constraints = true)) : nothing
 
-    @constraint(EP, mga_budget, system_cost <= budget_limit)
-    if scaling
+    cost_coefficients = [abs(coefficient) for (coefficient, _) in JuMP.linear_terms(system_cost)
+                         if !iszero(coefficient)]
+    isempty(cost_coefficients) && error("The system cost has no variable coefficients.")
+    budget_row_scale = max(1.0, min(least_cost, minimum(cost_coefficients) / 1e-3))
+    @constraint(EP, mga_budget,
+        system_cost / budget_row_scale <= budget_limit / budget_row_scale)
+    println("Parameter scale=$parameter_scale; MGA budget row: terms=$(length(cost_coefficients)), " *
+            "divisor=$budget_row_scale, RHS=$(budget_limit / budget_row_scale), " *
+            "coefficient range=[$(minimum(cost_coefficients) / budget_row_scale), " *
+            "$(maximum(cost_coefficients) / budget_row_scale)]")
+    if scaling && budget_row_scale == 1.0
         # Scaling may replace the budget with several constraints. Record all
         # of them so later cost-based pricing can remove the MGA budget.
         set_name(mga_budget, "mga_budget")
@@ -68,6 +85,16 @@ function run_mga(
         end
 
         optimize!(EP)
+        if has_values(EP)
+            model_cost = value(system_cost)
+            println("MGA $direction: status=$(termination_status(EP)), " *
+                    "system cost=$(model_cost * parameter_scale^2), " *
+                    "budget=$(budget_limit * parameter_scale^2)")
+            if !isnothing(least_cost_original)
+                model_cost <= budget_limit + max(1e-6 * budget_row_scale, 0.01 * budget_limit) ||
+                    error("MGA $direction violated the cost budget.")
+            end
+        end
         termination_status(EP) == MOI.OPTIMAL ||
             error("MGA $direction iteration $iteration group $group_index failed: $(termination_status(EP))")
 

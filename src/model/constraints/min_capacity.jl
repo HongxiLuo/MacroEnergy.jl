@@ -32,14 +32,7 @@ end
 # Parameter scaling hook (see scaling.jl): the floor `value`s are extensive (capacity) quantities, so
 # they are scaled by the same factor as capacity inputs (1/S on scale!, S on unscale!).
 function _scale_constraint_config!(ct::MinCapacityConstraint, factor::Float64, visited::Set{UInt64})
-    (ismissing(ct.config) || objectid(ct) in visited) && return nothing
-    push!(visited, objectid(ct))
-    for spec in values(ct.config)
-        if haskey(spec, :value) && spec[:value] isa Real
-            spec[:value] = spec[:value] * factor
-        end
-    end
-    return nothing
+    _scale_capacity_config!(ct, factor, visited)
 end
 
 @doc raw"""

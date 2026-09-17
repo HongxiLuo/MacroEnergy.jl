@@ -71,16 +71,24 @@ end
 
 # Parameter scaling hook (see scaling.jl): the cap `value`s are extensive (capacity) quantities, so
 # they are scaled by the same factor as capacity inputs (1/S on scale!, S on unscale!).
-function _scale_constraint_config!(ct::MaxCapacityConstraint, factor::Float64, visited::Set{UInt64})
+function _scale_capacity_config!(ct, factor::Float64, visited::Set{UInt64})
     (ismissing(ct.config) || objectid(ct) in visited) && return nothing
     push!(visited, objectid(ct))
-    for spec in values(ct.config)
-        if haskey(spec, :value) && spec[:value] isa Real
-            spec[:value] = spec[:value] * factor
+    if haskey(ct.config, :tech)
+        # Grouped form: :value is a number or the "existing_capacity" sentinel.
+        ct.config[:value] isa Real && (ct.config[:value] *= factor)
+    else
+        # Legacy form: each asset type has its own :value.
+        for spec in values(ct.config)
+            spec isa AbstractDict && haskey(spec, :value) && spec[:value] isa Real &&
+                (spec[:value] *= factor)
         end
     end
     return nothing
 end
+
+_scale_constraint_config!(ct::MaxCapacityConstraint, factor::Float64, visited::Set{UInt64}) =
+    _scale_capacity_config!(ct, factor, visited)
 
 # Build one grouped-capacity constraint per asset-type key in `ct.config`, storing them in
 # `ct.constraint_ref` keyed by asset type. Shared by the system-wide / per-location capacity-group
