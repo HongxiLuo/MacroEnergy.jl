@@ -85,18 +85,20 @@ function run_mga(
         end
 
         optimize!(EP)
+
         if has_values(EP)
             model_cost = value(system_cost)
             println("MGA $direction: status=$(termination_status(EP)), " *
                     "system cost=$(model_cost * parameter_scale^2), " *
                     "budget=$(budget_limit * parameter_scale^2)")
             if !isnothing(least_cost_original)
-                model_cost <= budget_limit + max(1e-6 * budget_row_scale, 0.01 * budget_limit) ||
-                    error("MGA $direction violated the cost budget.")
+                model_cost <= budget_limit + max(1e-6 * budget_row_scale, 0.05 * slack * abs(least_cost)) || error("MGA $direction violated the cost budget.")
             end
         end
-        termination_status(EP) == MOI.OPTIMAL ||
-            error("MGA $direction iteration $iteration group $group_index failed: $(termination_status(EP))")
+
+        status in (MOI.OPTIMAL, MOI.LOCALLY_SOLVED) || error("MGA $direction iteration $iteration group $group_index failed: $status")
+
+        primal_status(EP) == MOI.FEASIBLE_POINT || error("MGA $direction returned an invalid primal solution: $(primal_status(EP))")
 
         suffix = group_index == 0 ? "" : "_group_$(group_index)"
         outpath = joinpath(path, "MGAResults_$direction", "MGA_$(slack)_$(iteration)$(suffix)")
