@@ -13,7 +13,7 @@ function run_mga(
     case::Case,
     EP::Model,
     path::AbstractString;
-    rng = Random.default_rng(),
+    rng = nothing,
     least_cost_original = nothing
 )
     validate_mga(case)
@@ -29,6 +29,10 @@ function run_mga(
 
     mga_settings = case.settings.MGA
     slack = mga_settings.Epsilon
+    if isnothing(rng)
+        seed = get(mga_settings, :RandomSeed, nothing)
+        rng = isnothing(seed) ? Random.default_rng() : Random.MersenneTwister(seed)
+    end
 
     # Sort the (period, group) keys so random weights and output group indices
     # do not depend on dictionary insertion order
@@ -54,6 +58,12 @@ function run_mga(
                          if !iszero(coefficient)]
     isempty(cost_coefficients) && error("The system cost has no variable coefficients.")
     budget_row_scale = max(1.0, min(least_cost, minimum(cost_coefficients) / 1e-3))
+    mkpath(path)
+    open(joinpath(path, "mga_budget_coefficients.txt"), "w") do io
+        report_mga_budget_coefficients(io, system_cost; divisor=budget_row_scale,
+            budget_limit=budget_limit)
+    end
+    println("MGA budget coefficient report: ", joinpath(path, "mga_budget_coefficients.txt"))
     @constraint(EP, mga_budget,
         system_cost / budget_row_scale <= budget_limit / budget_row_scale)
     println("Parameter scale=$parameter_scale; MGA budget row: terms=$(length(cost_coefficients)), " *
@@ -74,6 +84,7 @@ function run_mga(
 
     # Reuse EP, changing only its objective for each MGA solve.
     results = NamedTuple[]
+    output_dirs = Dict{String,String}()
     for job in jobs
         (; iteration, group_index, weights, direction, sense) = job
         # RandomVector uses every group; VariableMinMax uses one group.
@@ -86,6 +97,28 @@ function run_mga(
 
         optimize!(EP)
 
+        #### START TEMPORARY DIAGNOSITCS
+        suffix = group_index == 0 ? "" : "_group_$(group_index)"
+        direction_path = get!(output_dirs, direction) do
+            create_mga_output_dir(joinpath(path, "results"), direction)
+        end
+        outpath = joinpath(direction_path, "MGA_$(slack)_$(iteration)$(suffix)")
+        mkpath(outpath)
+
+        # Save diagnostics before validation so failed solves also leave a report.
+        diagnostics = open(joinpath(outpath, "numerical_diagnostics.txt"), "w") do io
+            redirect_stdout(io) do
+                diagnose_numerics(
+                    EP;
+                    top_n = 30,
+                    tiny_threshold = 1e-8,
+                    large_threshold = 1e8,
+                )
+            end
+        end
+
+        ### END TEMPORARY DIAGNOSTICS
+
         if has_values(EP)
             model_cost = value(system_cost)
             println("MGA $direction: status=$(termination_status(EP)), " *
@@ -96,12 +129,12 @@ function run_mga(
             end
         end
 
+        status = termination_status(EP)
+
         status in (MOI.OPTIMAL, MOI.LOCALLY_SOLVED) || error("MGA $direction iteration $iteration group $group_index failed: $status")
 
         primal_status(EP) == MOI.FEASIBLE_POINT || error("MGA $direction returned an invalid primal solution: $(primal_status(EP))")
 
-        suffix = group_index == 0 ? "" : "_group_$(group_index)"
-        outpath = joinpath(path, "MGAResults_$direction", "MGA_$(slack)_$(iteration)$(suffix)")
         postprocess!(case, EP)
         write_outputs(outpath, case, EP)
 
@@ -123,6 +156,81 @@ function run_mga(
         push!(results, summary)
     end
     return results
+end
+
+"""Report extreme nonzero budget coefficients before constraint-scaling transformations.
+
+Keeps only 2*top_n terms in memory, even for multi-million-term budgets.
+Coefficients are ranked by magnitude; signed values and variable names are retained.
+"""
+function report_mga_budget_coefficients(io::IO, cost; divisor=1.0,
+    budget_limit=nothing, top_n::Int=30)
+    top_n > 0 || throw(ArgumentError("top_n must be positive"))
+    isfinite(divisor) && divisor > 0 || throw(ArgumentError("divisor must be finite and positive"))
+    smallest, largest = [], []
+    count = 0
+    for (coefficient, variable) in JuMP.linear_terms(cost)
+        iszero(coefficient) && continue
+        count += 1
+        magnitude = abs(coefficient)
+        entry = (; magnitude, coefficient, variable)
+        if length(smallest) < top_n || magnitude < last(smallest).magnitude
+            push!(smallest, entry)
+            sort!(smallest; by=x -> x.magnitude)
+            length(smallest) > top_n && pop!(smallest)
+        end
+        if length(largest) < top_n || magnitude > last(largest).magnitude
+            push!(largest, entry)
+            sort!(largest; by=x -> x.magnitude, rev=true)
+            length(largest) > top_n && pop!(largest)
+        end
+    end
+    println(io, "MGA budget coefficients BEFORE constraint scaling/presolve")
+    println(io, "Ranked by absolute coefficient, not by coefficient × solution value.")
+    println(io, "Coefficients are in model units; no physical-unit conversion is applied.")
+    println(io, "Nonzero terms: ", count, "; row divisor: ", divisor)
+    println(io, "Cost constant: ", JuMP.constant(cost))
+    if !isnothing(budget_limit)
+        println(io, "Budget limit / divisor: ", budget_limit / divisor)
+        println(io, "RHS after moving constant: ", (budget_limit - JuMP.constant(cost)) / divisor)
+    end
+    if count > 0
+        println(io, "Max/min coefficient magnitude ratio: ", first(largest).magnitude / first(smallest).magnitude)
+    end
+    for (label, entries) in (("SMALLEST", smallest), ("LARGEST", largest))
+        println(io, "\n", label, " ", length(entries), " NONZERO COEFFICIENT MAGNITUDES")
+        println(io, "rank\tcost_coefficient\tbudget_row_coefficient\tvariable_index\tvariable_name")
+        for (rank, entry) in enumerate(entries)
+            variable_name = JuMP.name(entry.variable)
+            isempty(variable_name) && (variable_name = string(entry.variable))
+            println(io, rank, '\t', entry.coefficient, '\t', entry.coefficient / divisor,
+                '\t', JuMP.index(entry.variable).value, '\t', variable_name)
+        end
+    end
+    return nothing
+end
+
+"""Reserve the next numbered MGA folder without overwriting another run."""
+function create_mga_output_dir(results_path::AbstractString, direction::AbstractString)
+    mkpath(results_path)
+    prefix = "MGAResults_$(direction)_"
+    run_number = 1
+    for entry in readdir(results_path)
+        startswith(entry, prefix) || continue
+        number = tryparse(Int, chop(entry; head = length(prefix), tail = 0))
+        isnothing(number) || (run_number = max(run_number, number + 1))
+    end
+    while true
+        outpath = joinpath(results_path, prefix * lpad(string(run_number), 2, '0'))
+        try
+            mkdir(outpath)
+            return outpath
+        catch
+            # Another process may have reserved this number since readdir.
+            ispath(outpath) || rethrow()
+            run_number += 1
+        end
+    end
 end
 
 """Create MGA objectives in solve order, pairing max and min for each vector or group."""

@@ -17,7 +17,8 @@ function default_case_settings()
             :Groupings => ["location", "technology"],
             :Quantity => "capacity",
             :MGAAlgorithm => "RandomVector",
-            :NumIterations => 10
+            :NumIterations => 10,
+            :RandomSeed => nothing
         )
     )
 end
@@ -140,6 +141,7 @@ function configure_case(case_settings::AbstractDict{Symbol,Any})
     @info("Configuring case")
     settings = default_case_settings()
     settings = merge(settings, case_settings)
+    settings[:MGA] = merge(default_case_settings()[:MGA], settings[:MGA])
     set_period_lengths!(settings)
     set_solution_algorithm!(settings)
     set_expansion_horizon!(settings)
@@ -150,6 +152,8 @@ function configure_case(case_settings::AbstractDict{Symbol,Any})
 end
 
 function validate_case_settings(case_settings::AbstractDict{Symbol,Any})
+    seed = case_settings[:MGA][:RandomSeed]
+    @assert isnothing(seed) || (seed isa Integer && !(seed isa Bool) && seed >= 0) "MGA.RandomSeed must be null or a nonnegative integer."
     @assert all(case_settings[:PeriodLengths].>0)
     @assert case_settings[:DiscountRate] >= 0
     @assert isa(case_settings[:WriteFullTimeseries], Bool)
