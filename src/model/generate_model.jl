@@ -33,7 +33,12 @@ function generate_model(case::Case, opt::Optimizer, ::Monolithic)
 
     finalize_model_objective!(model, settings, fixed_cost, investment_cost, om_fixed_cost, variable_cost)
 
-    scale_constraints!(case, model)
+    # Keep the cost value unchanged so MGA can use it as its budget baseline.
+    scaling_settings = MacroEnergyScaling.ScalingSettings(scale_objective_uniformly=false)
+    MacroEnergyScaling.scale_objective!(model, scaling_settings)
+    model.ext[:macro_scaling_settings] = scaling_settings
+    scale_constraints!(case, model, scaling_settings)
+    remove_proxy_bounds!(scaling_settings)
 
     @info(" -- Model generation complete, it took $(time() - start_time) seconds")
     
@@ -60,7 +65,10 @@ function generate_model(system::System, opt::Optimizer, settings::NamedTuple, ::
 
     finalize_model_objective!(model, settings, fixed_cost, investment_cost, om_fixed_cost, variable_cost)
 
-    scale_constraints!(system, model)
+    scaling_settings = MacroEnergyScaling.ScalingSettings(scale_objective_uniformly=false)
+    MacroEnergyScaling.scale_objective!(model, scaling_settings)
+    scale_constraints!(system, model, scaling_settings)
+    remove_proxy_bounds!(scaling_settings)
 
     return model
 

@@ -6,6 +6,8 @@ using MacroEnergy
 test_logger = ConsoleLogger(stderr, Logging.Warn)
 
 with_logger(test_logger) do
+    include("test_model_scaling.jl")
+
     Test.@testset verbose = true "Load Inputs" begin
         include("test_workflow.jl")
         include("test_balance_data.jl")

@@ -51,30 +51,29 @@ function run_mga(
     # Add the shared budget once to the baseline model.
     system_cost = objective_function(EP)
     scaling = first(get_periods(case)).settings.ConstraintScaling
+    scaling_settings = get(EP.ext, :macro_scaling_settings, MacroEnergyScaling.ScalingSettings())
     constraints_before = scaling ?
         Set(JuMP.all_constraints(EP; include_variable_in_set_constraints = true)) : nothing
 
     cost_coefficients = [abs(coefficient) for (coefficient, _) in JuMP.linear_terms(system_cost)
                          if !iszero(coefficient)]
     isempty(cost_coefficients) && error("The system cost has no variable coefficients.")
-    budget_row_scale = max(1.0, min(least_cost, minimum(cost_coefficients) / 1e-3))
     mkpath(path)
     open(joinpath(path, "mga_budget_coefficients.txt"), "w") do io
-        report_mga_budget_coefficients(io, system_cost; divisor=budget_row_scale,
-            budget_limit=budget_limit)
+        report_mga_budget_coefficients(io, system_cost; budget_limit=budget_limit)
     end
     println("MGA budget coefficient report: ", joinpath(path, "mga_budget_coefficients.txt"))
-    @constraint(EP, mga_budget,
-        system_cost / budget_row_scale <= budget_limit / budget_row_scale)
+    @constraint(EP, mga_budget, system_cost <= budget_limit)
     println("Parameter scale=$parameter_scale; MGA budget row: terms=$(length(cost_coefficients)), " *
-            "divisor=$budget_row_scale, RHS=$(budget_limit / budget_row_scale), " *
-            "coefficient range=[$(minimum(cost_coefficients) / budget_row_scale), " *
-            "$(maximum(cost_coefficients) / budget_row_scale)]")
-    if scaling && budget_row_scale == 1.0
-        # Scaling may replace the budget with several constraints. Record all
-        # of them so later cost-based pricing can remove the MGA budget.
+            "RHS=$budget_limit, " *
+            "coefficient range=[$(minimum(cost_coefficients)), " *
+            "$(maximum(cost_coefficients))]")
+    if scaling
+        # Scaling can add proxy-link constraints. Record them with the budget
+        # so later code can remove the complete MGA cost limit.
         set_name(mga_budget, "mga_budget")
-        scale_constraints!(ConstraintRef[mga_budget])
+        scale_constraints!([mga_budget], scaling_settings)
+        remove_proxy_bounds!(scaling_settings)
         EP[:cMGABudget] = filter(
             constraint -> constraint ∉ constraints_before,
             JuMP.all_constraints(EP; include_variable_in_set_constraints = true))
@@ -125,7 +124,7 @@ function run_mga(
                     "system cost=$(model_cost * parameter_scale^2), " *
                     "budget=$(budget_limit * parameter_scale^2)")
             if !isnothing(least_cost_original)
-                model_cost <= budget_limit + max(1e-6 * budget_row_scale, 0.05 * slack * abs(least_cost)) || error("MGA $direction violated the cost budget.")
+                model_cost <= budget_limit + max(1e-6, 0.05 * slack * abs(least_cost)) || error("MGA $direction violated the cost budget.")
             end
         end
 
@@ -163,10 +162,8 @@ end
 Keeps only 2*top_n terms in memory, even for multi-million-term budgets.
 Coefficients are ranked by magnitude; signed values and variable names are retained.
 """
-function report_mga_budget_coefficients(io::IO, cost; divisor=1.0,
-    budget_limit=nothing, top_n::Int=30)
+function report_mga_budget_coefficients(io::IO, cost; budget_limit=nothing, top_n::Int=30)
     top_n > 0 || throw(ArgumentError("top_n must be positive"))
-    isfinite(divisor) && divisor > 0 || throw(ArgumentError("divisor must be finite and positive"))
     smallest, largest = [], []
     count = 0
     for (coefficient, variable) in JuMP.linear_terms(cost)
@@ -188,22 +185,22 @@ function report_mga_budget_coefficients(io::IO, cost; divisor=1.0,
     println(io, "MGA budget coefficients BEFORE constraint scaling/presolve")
     println(io, "Ranked by absolute coefficient, not by coefficient × solution value.")
     println(io, "Coefficients are in model units; no physical-unit conversion is applied.")
-    println(io, "Nonzero terms: ", count, "; row divisor: ", divisor)
+    println(io, "Nonzero terms: ", count)
     println(io, "Cost constant: ", JuMP.constant(cost))
     if !isnothing(budget_limit)
-        println(io, "Budget limit / divisor: ", budget_limit / divisor)
-        println(io, "RHS after moving constant: ", (budget_limit - JuMP.constant(cost)) / divisor)
+        println(io, "Budget limit: ", budget_limit)
+        println(io, "RHS after moving constant: ", budget_limit - JuMP.constant(cost))
     end
     if count > 0
         println(io, "Max/min coefficient magnitude ratio: ", first(largest).magnitude / first(smallest).magnitude)
     end
     for (label, entries) in (("SMALLEST", smallest), ("LARGEST", largest))
         println(io, "\n", label, " ", length(entries), " NONZERO COEFFICIENT MAGNITUDES")
-        println(io, "rank\tcost_coefficient\tbudget_row_coefficient\tvariable_index\tvariable_name")
+        println(io, "rank\tcost_coefficient\tvariable_index\tvariable_name")
         for (rank, entry) in enumerate(entries)
             variable_name = JuMP.name(entry.variable)
             isempty(variable_name) && (variable_name = string(entry.variable))
-            println(io, rank, '\t', entry.coefficient, '\t', entry.coefficient / divisor,
+            println(io, rank, '\t', entry.coefficient,
                 '\t', JuMP.index(entry.variable).value, '\t', variable_name)
         end
     end

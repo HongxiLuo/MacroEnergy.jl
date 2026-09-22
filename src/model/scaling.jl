@@ -144,11 +144,25 @@ const _STORAGE_SCALABLE_FIELDS = Symbol[
 scalable_fields(::AbstractEdge) = _EDGE_SCALABLE_FIELDS
 scalable_fields(::AbstractStorage) = _STORAGE_SCALABLE_FIELDS
 
+# MacroEnergyScaling 0.4.0 creates a proxy p with var == multiplier * p,
+# but copies var's bounds to p after multiplying them by multiplier. Those
+# bounds can contradict the equality. The equality and original bounds already
+# restrict p, so remove the redundant proxy bounds after scaling.
+function remove_proxy_bounds!(scaling_settings::MacroEnergyScaling.ScalingSettings)
+    for proxies in values(scaling_settings.proxy_var_map)
+        for (proxy, _) in proxies
+            has_lower_bound(proxy) && delete_lower_bound(proxy)
+            has_upper_bound(proxy) && delete_upper_bound(proxy)
+        end
+    end
+    return nothing
+end
+
 # MacroEnergyScaling.scale_constraints!
-function scale_constraints!(system::System, model::Model)
+function scale_constraints!(system::System, model::Model, scaling_settings::MacroEnergyScaling.ScalingSettings=MacroEnergyScaling.ScalingSettings())
     if system.settings.ConstraintScaling
         @info "Scaling constraints and RHS"
-        scale_constraints!(model)
+        scale_constraints!(model, scaling_settings)
         repair_stale_constraint_refs!(system, model)
     end
     return nothing
@@ -172,10 +186,10 @@ end
 # A monolithic model (`generate_model(case::Case, ...)`) spans every period in `case.systems`
 # but is a single shared Model, so it needs its own overload: none of the above match one Case
 # against one Model rather than one System/Vector{System} against a matching Model/Vector{Model}.
-function scale_constraints!(case::Case, model::Model)
+function scale_constraints!(case::Case, model::Model, scaling_settings::MacroEnergyScaling.ScalingSettings=MacroEnergyScaling.ScalingSettings())
     if case.systems[1].settings.ConstraintScaling
         @info "Scaling constraints and RHS"
-        scale_constraints!(model)
+        scale_constraints!(model, scaling_settings)
         repair_stale_constraint_refs!(case, model)
     end
     return nothing
