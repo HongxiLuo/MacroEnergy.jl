@@ -74,7 +74,11 @@ end
 function _scale_capacity_config!(ct, factor::Float64, visited::Set{UInt64})
     (ismissing(ct.config) || objectid(ct) in visited) && return nothing
     push!(visited, objectid(ct))
-    if haskey(ct.config, :tech)
+    if haskey(ct.config, :groups)
+        for spec in values(ct.config[:groups])
+            spec[:value] isa Real && (spec[:value] *= factor)
+        end
+    elseif haskey(ct.config, :tech)
         # Grouped form: :value is a number or the "existing_capacity" sentinel.
         ct.config[:value] isa Real && (ct.config[:value] *= factor)
     else
@@ -100,12 +104,18 @@ _scale_constraint_config!(ct::MaxCapacityConstraint, factor::Float64, visited::S
 # `ct.config` is either a single grouped spec — `Dict(:tech => Dict(asset type => Dict(:edge, :coeff)),
 # :value => cap)`, summing `coeff * var(edge)` across every listed asset type into one constraint — or,
 # for backward compatibility, a Dict of independent single-type specs `asset type => Dict(:edge, :value)`.
+# Multiple independent groups use Dict(:groups => Dict(group name => Dict(:tech, :value))).
+# Each named group has its own cap; capacities cannot be exchanged between groups.
 function build_grouped_capacity_constraints!(ct, system::System, model::Model;
         var::Function, sense::Symbol, name::String, loc::Union{Missing,Symbol}=missing)
     ismissing(ct.config) && error("$name has no configuration; it must be enabled with a config object in the `constraints` block")
 
     ct.constraint_ref = Dict{Symbol,Any}()
-    groups = haskey(ct.config, :tech) ?
+    haskey(ct.config, :groups) && length(ct.config) != 1 &&
+        error("$name: `groups` cannot be combined with other top-level configuration keys")
+    groups = haskey(ct.config, :groups) ?
+        [(key, spec[:tech], spec[:value]) for (key, spec) in ct.config[:groups]] :
+        haskey(ct.config, :tech) ?
         [(:tech, ct.config[:tech], ct.config[:value])] :
         [(at, Dict(at => spec), spec[:value]) for (at, spec) in ct.config]
 
@@ -129,8 +139,12 @@ function build_grouped_capacity_constraints!(ct, system::System, model::Model;
                     @warn "$name: edge field `$edge_field` of asset $(id(a)) (`$(get_type(a))`) has no capacity variable; skipping"
                     continue
                 end
-                # Per-location scope: skip assets not located in `loc`.
-                ismissing(loc) || capped_edge_location(e) == loc || continue
+                # Regional caps require an explicit, resolvable assignment for every matched edge.
+                if !ismissing(loc)
+                    edge_location = capped_edge_location(e)
+                    ismissing(edge_location) && error("$name: group `$key`, asset $(id(a)) (`$(get_type(a))`), edge `$edge_field` has no resolvable location. Set the edge location or a connected vertex's location before applying regional capacity constraints.")
+                    edge_location == loc || continue
+                end
                 add_to_expression!(total_capacity, coeff, var(e))
                 existing_capacity_total += coeff * existing_capacity(e)
                 contributed = true

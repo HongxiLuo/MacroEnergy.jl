@@ -60,6 +60,25 @@ function test_max_capacity()
             @test capped_edge_location(get_component_by_fieldname(windB, :edge)) == :B
         end
 
+        @testset "missing location and output-node fallback" begin
+            system = build_system()
+            edge = system.assets[1].edge
+            edge.location = missing
+            MacroEnergy.start_vertex(edge).location = missing
+            MacroEnergy.end_vertex(edge).location = missing
+            @test ismissing(capped_edge_location(edge))
+            ct = MaxCapacityConstraint(; config = vre_cfg(5.0))
+            model = build_test_model(system)
+            @test_throws r"solarA.*edge.*no resolvable location" MacroEnergy.build_max_capacity_constraints!(ct, system, model; loc = :A)
+            # System-wide caps do not need regional assignments.
+            MacroEnergy.build_max_capacity_constraints!(ct, system, model)
+            @test nterms(ct.constraint_ref[:VRE]) == 2
+            MacroEnergy.end_vertex(edge).location = :A
+            @test capped_edge_location(edge) == :A
+            MacroEnergy.build_max_capacity_constraints!(ct, system, model; loc = :A)
+            @test nterms(ct.constraint_ref[:VRE]) == 1
+        end
+
         @testset "system-wide scope" begin
             system = build_system()
             ct = MaxCapacityConstraint(; config = vre_cfg(5.0))
@@ -89,6 +108,37 @@ function test_max_capacity()
             @test nterms(ctB.constraint_ref[:VRE]) == 1
             # Empty location group (:C) builds no constraint for that asset type.
             @test !haskey(ctC.constraint_ref, :VRE)
+        end
+
+        @testset "independent named groups and existing capacity" begin
+            system = build_system()
+            push!(system.assets, make_vre_asset(:windA, "Wind", :A, system))
+            for a in system.assets
+                a.edge.existing_capacity = 2.0
+            end
+            cfg = Dict{Symbol,Any}(:groups => Dict{Symbol,Any}(
+                :combined => Dict{Symbol,Any}(
+                    :tech => Dict(Symbol("VRE{Solar}") => Dict(:edge => "edge"),
+                                  Symbol("VRE{Wind}") => Dict(:edge => "edge")),
+                    :value => "existing_capacity"),
+                :solar_only => Dict{Symbol,Any}(
+                    :tech => Dict(Symbol("VRE{Solar}") => Dict(:edge => "edge")),
+                    :value => 3.0)))
+            ct = MaxCapacityConstraint(; config = cfg)
+            push!(system.locations, Location(; id = :A, system = system, constraints = [ct]))
+            build_test_model(system)
+            @test Set(keys(ct.constraint_ref)) == Set([:combined, :solar_only])
+            @test nterms(ct.constraint_ref[:combined]) == 2
+            @test nterms(ct.constraint_ref[:solar_only]) == 1
+            @test normalized_rhs(ct.constraint_ref[:combined]) == 4.0
+            @test normalized_rhs(ct.constraint_ref[:solar_only]) == 3.0
+            visited = Set{UInt64}()
+            MacroEnergy._scale_capacity_config!(ct, 0.001, visited)
+            MacroEnergy._scale_capacity_config!(ct, 0.001, visited)
+            @test cfg[:groups][:solar_only][:value] == 0.003
+            @test cfg[:groups][:combined][:value] == "existing_capacity"
+            MacroEnergy._scale_capacity_config!(ct, 1000.0, Set{UInt64}())
+            @test cfg[:groups][:solar_only][:value] == 3.0
         end
 
         @testset "parameter scaling of RHS" begin

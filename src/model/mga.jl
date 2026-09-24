@@ -50,36 +50,25 @@ function run_mga(
     # Save the cost expression before replacing the objective for each MGA job.
     # Add the shared budget once to the baseline model.
     system_cost = objective_function(EP)
-    scaling = first(get_periods(case)).settings.ConstraintScaling
-    scaling_settings = get(EP.ext, :macro_scaling_settings, MacroEnergyScaling.ScalingSettings())
-    constraints_before = scaling ?
-        Set(JuMP.all_constraints(EP; include_variable_in_set_constraints = true)) : nothing
 
     cost_coefficients = [abs(coefficient) for (coefficient, _) in JuMP.linear_terms(system_cost)
                          if !iszero(coefficient)]
+
     isempty(cost_coefficients) && error("The system cost has no variable coefficients.")
     mkpath(path)
     open(joinpath(path, "mga_budget_coefficients.txt"), "w") do io
         report_mga_budget_coefficients(io, system_cost; budget_limit=budget_limit)
     end
+    
     println("MGA budget coefficient report: ", joinpath(path, "mga_budget_coefficients.txt"))
     @constraint(EP, mga_budget, system_cost <= budget_limit)
     println("Parameter scale=$parameter_scale; MGA budget row: terms=$(length(cost_coefficients)), " *
             "RHS=$budget_limit, " *
             "coefficient range=[$(minimum(cost_coefficients)), " *
             "$(maximum(cost_coefficients))]")
-    if scaling
-        # Scaling can add proxy-link constraints. Record them with the budget
-        # so later code can remove the complete MGA cost limit.
-        set_name(mga_budget, "mga_budget")
-        scale_constraints!([mga_budget], scaling_settings)
-        remove_proxy_bounds!(scaling_settings)
-        EP[:cMGABudget] = filter(
-            constraint -> constraint ∉ constraints_before,
-            JuMP.all_constraints(EP; include_variable_in_set_constraints = true))
-    else
-        EP[:cMGABudget] = ConstraintRef[mga_budget]
-    end
+
+    set_name(mga_budget, "mga_budget")
+    EP[:cMGABudget] = ConstraintRef[mga_budget]
 
     # Reuse EP, changing only its objective for each MGA solve.
     results = NamedTuple[]
